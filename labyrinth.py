@@ -5,6 +5,8 @@ import re
 import time
 import datetime
 import korean
+import atexit
+
 
 class SafeDict(dict):
     def __missing__(self, key):
@@ -60,6 +62,8 @@ def run(board, is_miner, userid, secret):
     sess = dc_api.login(userid, secret)
     max_floor = sum(1 for i in os.listdir(SCENES_PATH) if os.path.isdir(os.path.join(SCENES_PATH, i)))
     answerer = ""
+    doc_no = ""
+    atexit.register(lambda: dc_api.removeDoc(board, is_miner, doc_no, password=None, sess=sess))
     for floor in range(1, max_floor+1):
         try:
             scene, answer = createScene(floor)
@@ -89,8 +93,13 @@ def run(board, is_miner, userid, secret):
                 #        dc_api.writeComment(board=board, is_miner=is_miner, doc_no=doc["doc_no"], name=None, password=None, contents=ANSWER_COMMENT.format(name=Noun(doc["name"])), sess=sess)
                 #        solved = True
                 time.sleep(1)
+        except KeyboardInterrupt:
+            try: dc_api.removeDoc(board=board, is_miner=is_miner, doc_no=doc_no, password=None, sess=sess)
+            except: pass
+            exit(1)
         except:
             floor -= 1
+            dc_api.removeDoc(board=board, is_miner=is_miner, doc_no=doc_no, password=None, sess=sess)
             continue
         
 

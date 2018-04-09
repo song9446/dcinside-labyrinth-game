@@ -37,6 +37,33 @@ POST_HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
     }
 
+def upvote(board, is_miner, doc_no, sess=None):
+    if sess is None:
+        sess = requests.session()
+    url = "http://m.dcinside.com/view.php?id=%s&no=%s" % (board, doc_no)
+    res = sess.get(url, headers=GET_HEADERS, timeout=10)
+    _, s = raw_parse(res.text, "function join_recommend()", "{")
+    _, e = raw_parse(res.text, "$.ajax", "{", s)
+    cookie_name, _ = raw_parse(res.text, 'setCookie_hk_hour("', '"', s)
+    sess.cookies[cookie_name] = "done"
+    data = []
+    while s < e:
+        nv, s = raw_parse(res.text, '= "', '"', s)
+        if s >= e: break
+        nv= nv.split("=")
+        data.append((nv[0] if nv[0][0] != "&" else nv[0][1:], nv[1] or "undefined"))
+    data = "&".join("=".join(i) for i in data)
+    headers = POST_HEADERS.copy()
+    print(url)
+    headers["Referer"] = url
+    headers["Accept-Language"] = "en-US,en;q=0.9"
+    url = "http://m.dcinside.com/_recommend_join.php"
+    #data["rand_code"] = "undefined"
+    #data["captcha_code"] = "undefined"
+    print(data)
+    res = sess.post(url, headers=headers, data=data, timeout=10, cookies=sess.cookies)
+    print(res.headers)
+
 def iterableBoard(board, is_miner=False, num=-1, start_page=1, sess=None):
     # create session
     if sess is None:
@@ -223,7 +250,6 @@ def login(userid, password, sess=None):
     headers["Referer"] = "http://m.dcinside.com/index.php"
     res = sess.get(url, headers=headers, timeout=10)
     data = extractKeys(res.text, '"login_process')
-    print(res.text)
     headers = POST_HEADERS.copy()
     headers["Referer"] = url
     url = "http://m.dcinside.com/_access_token.php"
@@ -238,13 +264,15 @@ def login(userid, password, sess=None):
     del(headers["X-Requested-With"])
     data["user_id"] = userid
     data["user_pw"] = password
-    data["id_chk"] = "on"
+    data["id_chk"] = ""
     #data["mode"] = ""
     if "form_ipin" in data: del(data["form_ipin"])
     res = sess.post(url, headers=headers, data=data, timeout=10)
+    print(data)
     while 0 <= res.text.find("rucode"):
         print("login fail!")
         print(res.text)
+        print(res.headers)
         time.sleep(5)
         res = sess.post(url, headers=headers, data=data, timeout=10)
     return sess
@@ -334,6 +362,7 @@ if __name__ == '__main__':
     #removeDoc("alphago", True, "276", None, sess)
     #logout(sess=sess)
     #removeDoc("alphago", True, "279", "1234")
+    upvote("alphago", True, "186")
     exit(1)
     #res = writeDoc("얄파고", "1234", "alphago", "알파고님 동물원 언제만드시냐", "거기 들어가면 알파고님이 교배시켜주시겠지? ㅎㅎㅎㅎ")
     #[print(i) for i in iterableBoard(board="programming", num=100)]
