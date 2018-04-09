@@ -26,26 +26,43 @@ def execute(cmd):
 def start(config_data):
     _, temp_path = tempfile.mkstemp()
     with open(temp_path, 'w') as f:
-        print(base64.b64decode(config_data).decode("utf-8"))
         f.write(base64.b64decode(config_data).decode("utf-8"))
         f.write('\nscript-security 2\nup /etc/openvpn/update-resolv-conf\ndown /etc/openvpn/update-resolv-conf')
-    p = subprocess.Popen(['sudo', 'openvpn', '--config', temp_path], stdout=subprocess.PIPE, universal_newlines=True)
+    p = subprocess.Popen(['openvpn', '--config', temp_path], stdout=subprocess.PIPE, universal_newlines=True)
     for stdout_line in iter(p.stdout.readline, ""):
         if "Initialization Sequence Completed" in stdout_line:
             break
+        elif "will try again" in stdout_line or "process restarting" in stdout_line:
+            stop(p)
+            return None
+            break
+        else:
+            print(stdout_line)
     return p
 
 def stop(p):
     p.kill()
+    #os.system("sudo kill %d"%(p.pid))
+    while p.poll() == None:
+        time.sleep(0.5)
 
-def doVPN(func, n=1):
+def do(func, n=1):
     vpn_list = getVpngateServerList()
+    n = min(n, len(vpn_list))
     for i in range(n):
+        print("starting..")
         p = start(vpn_list[i][-1])
-        func()
-        stop(p)
+        print(p)
+        if p:
+            func()
+            stop(p)
 
 if __name__ == '__main__':
+    vpn_list = getVpngateServerList()
+    print(len(vpn_list))
+    for i in range(len(vpn_list)):
+        print(len(vpn_list[i][-1]))
+    exit(1)
     l = getVpngateServerList()
     p = start(l[0][-1])
     try:

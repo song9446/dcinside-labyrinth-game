@@ -8,6 +8,8 @@ import json
 import time
 import urllib
 import urllib.parse
+import vpn
+import random
 #from collections import OrderedDict
 #import logging
 #logging.basicConfig(level=logging.DEBUG)
@@ -37,27 +39,61 @@ POST_HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
     }
 
-def upvote(board, is_miner, doc_no, sess=None):
-    if sess is None:
-        sess = requests.session()
-    url = "http://m.dcinside.com/view.php?id=%s&no=%s" % (board, doc_no)
-    res = sess.get(url, headers=GET_HEADERS, timeout=10)
-    _, s = raw_parse(res.text, "function join_recommend()", "{")
-    _, e = raw_parse(res.text, "$.ajax", "{", s)
-    cookie_name, _ = raw_parse(res.text, 'setCookie_hk_hour("', '"', s)
-    sess.cookies[cookie_name] = "done"
-    data = {}
-    while s < e:
-        nv, s = raw_parse(res.text, '= "', '"', s)
-        if s >= e: break
-        nv= nv.split("=")
-        data[nv[0] if nv[0][0] != "&" else nv[0][1:]] = nv[1] or "undefined"
-    headers = POST_HEADERS.copy()
-    headers["Referer"] = url
-    headers["Accept-Language"] = "en-US,en;q=0.9"
-    url = "http://m.dcinside.com/_recommend_join.php"
-    res = sess.post(url, headers=headers, data=data, timeout=10)
-    return ':"1"' in res.text
+def _post(sess, url, data=None, json=None, **kwargs):
+    res = None
+    while not res:
+        try:
+            res = sess.post(url, data=data, json=json, **kwargs)
+        except requests.exceptions.Timeout:
+            pass
+        except requests.exceptions.TooManyRedirects:
+            pass
+        except Exception as e:
+            raise(e)
+    return res
+
+def _get(sess, url, **kwargs):
+    res = None
+    while not res:
+        try:
+            res = sess.get(url, **kwargs)
+        except requests.exceptions.Timeout:
+            pass
+        except requests.exceptions.TooManyRedirects:
+            pass
+        except Exception as e:
+            raise(e)
+    return res
+
+def upvote(board, is_miner, doc_no, num=1, sess=None):
+    if num>1:
+        def f():
+            f.n += upvote(board, is_miner, doc_no)
+        f.n = 0
+        #vpn.do(lambda: n += upvote(board, is_miner, doc_no), num)
+        vpn.do(f, num)
+        return f.n
+    else:
+        if sess is None:
+            sess = requests.session()
+        url = "http://m.dcinside.com/view.php?id=%s&no=%s" % (board, doc_no)
+        res = _get(sess, url, headers=GET_HEADERS, timeout=3)
+        _, s = raw_parse(res.text, "function join_recommend()", "{")
+        _, e = raw_parse(res.text, "$.ajax", "{", s)
+        cookie_name, _ = raw_parse(res.text, 'setCookie_hk_hour("', '"', s)
+        sess.cookies[cookie_name] = "done"
+        data = {}
+        while s < e:
+            nv, s = raw_parse(res.text, '= "', '"', s)
+            if s >= e: break
+            nv= nv.split("=")
+            data[nv[0] if nv[0][0] != "&" else nv[0][1:]] = nv[1] or "undefined"
+        headers = POST_HEADERS.copy()
+        headers["Referer"] = url
+        headers["Accept-Language"] = "en-US,en;q=0.9"
+        url = "http://m.dcinside.com/_recommend_join.php"
+        res = _post(sess, url, headers=headers, data=data, timeout=3)
+        return ':"1"' in res.text
 
 def iterableBoard(board, is_miner=False, num=-1, start_page=1, sess=None):
     # create session
@@ -73,7 +109,7 @@ def iterableBoard(board, is_miner=False, num=-1, start_page=1, sess=None):
     header["Referer"] = url
     while num != 0:
         params["page"] = str(page)
-        res = sess.get(url, headers=header, params=params, timeout=10)
+        res = _get(sess, url, headers=header, params=params, timeout=3)
         t, start = raw_parse(res.text, '"list_best">', "<", i)
         t, end = raw_parse(res.text, "</ul", ">", start)
         i = start
@@ -119,7 +155,7 @@ def iterableComments(board, is_miner, doc_no, num=-1, sess=None):
     
     while num != 0:
         params["com_page"] = str(page)
-        res = sess.get(url, headers=headers, params=params, timeout=10)
+        res = _get(sess, url, headers=headers, params=params, timeout=3)
         t, i = raw_parse(res.text, 'txt_total">(', ')', i)
         if i==0: break
         num_comments = min(num_comments, int(t))
@@ -148,7 +184,7 @@ def writeDoc(board, is_miner, name, password, title, contents, sess=None):
     if sess is None:
         sess = requests.Session()
     url = "http://m.dcinside.com/write.php?id=%s&mode=write" % board
-    res = sess.get(url, headers=GET_HEADERS)
+    res = _get(sess, url, headers=GET_HEADERS)
     # get secret input
     data = extractKeys(res.text, 'g_write.php"')
     if name: data['name'] = name
@@ -167,14 +203,14 @@ def writeDoc(board, is_miner, name, password, title, contents, sess=None):
         "w_filter": "",
         "mode": "write_verify",
     }
-    new_block_key = sess.post(url, data=verify_data, headers=headers).json()
+    new_block_key = _post(sess, url, data=verify_data, headers=headers).json()
     if new_block_key["msg"] != "5":
         print("Error wile write doc(block_key)")
         print(result)
-        exit(1)
+        raise Exception(repr(new_block_key))
     data["Block_key"] = new_block_key["data"]
     url = "http://upload.dcinside.com/g_write.php"
-    result = sess.post(url, data=urllib.parse.urlencode(data, True), headers=headers).text
+    result = _post(sess, url, data=urllib.parse.urlencode(data, True), headers=headers).text
     doc_no, i = raw_parse(result, "no=", '"')
     return doc_no
 
@@ -187,26 +223,26 @@ def removeDoc(board, is_miner, doc_no, password, sess=None):
     if password:
         url = "http://m.dcinside.com/_access_token.php"
         headers["Referer"] = "http://m.dcinside.com/password.php?id=%s&no=%s&mode=board_del2&flag=" % (board, doc_no)
-        result = sess.post(url, data={"token_verify": "nonuser_del"}, headers=headers).json()
+        result = _post(sess, url, data={"token_verify": "nonuser_del"}, headers=headers).json()
         if result["msg"] != "5":
             print("Error wile write doc(block_key)")
             print(result)
-            exit(1)
+            raise Exception(repr(result))
         data["mode"] = "board_del2"
         data["write_pw"] = password
         data["con_key"] = result["data"]
     else:
         url = "http://m.dcinside.com/view.php?id=%s&no=%s" % (board, doc_no)
-        res = sess.get(url, headers=GET_HEADERS)
+        res = _get(sess, url, headers=GET_HEADERS)
         user_no = raw_parse(res.text, '"user_no" value="', '"')[0]
         headers["Referer"] = url
         data["mode"] = "board_del"
         data["user_no"] = user_no
     url = "http://m.dcinside.com/_option_write.php"
-    result = sess.post(url, data=data, headers=headers).json()
+    result = _post(sess, url, data=data, headers=headers).json()
     if (type(result)==int and result != 1) or (type(result)==dict and result["msg"] != "1"):
         print("Error while remove doc: ", result)
-        exit(1)
+        raise Exception(repr(result))
     return sess
 
 
@@ -215,7 +251,7 @@ def writeComment(board, is_miner, doc_no, name, password, contents, sess=None):
     if sess is None:
         sess = requests.Session()
     url = "http://m.dcinside.com/view.php?id=%s&no=%s" % (board, doc_no)
-    res = sess.get(url, headers=GET_HEADERS, timeout=10)
+    res = _get(sess, url, headers=GET_HEADERS, timeout=3)
     data = extractKeys(res.text, '"comment_write"')
     if name: data["comment_nick"] = name
     if password: data["comment_pw"] = password
@@ -223,17 +259,17 @@ def writeComment(board, is_miner, doc_no, name, password, contents, sess=None):
     headers = POST_HEADERS.copy()
     headers["Referer"] = url
     url = "http://m.dcinside.com/_access_token.php"
-    block_key = sess.post(url, headers=headers, data={"token_verify": "com_submit"}, timeout=10).json()
+    block_key = _post(sess, url, headers=headers, data={"token_verify": "com_submit"}, timeout=3).json()
     if block_key["msg"] != "5":
         print("Error wile write comment(block key)")
-        exit(1)
+        raise Exception(repr(block_key))
     url = "http://m.dcinside.com/_option_write.php"
     data["con_key"] = block_key["data"]
-    result = sess.post(url, headers=headers, data=data, timeout=10)
+    result = _post(sess, url, headers=headers, data=data, timeout=3)
     result = result.json()
     if result["msg"] != "1":
-        print("Error wile write comment")
-        exit(1)
+        print("Error wile write comment", result)
+        raise Exception(repr(result))
     return doc_no
     
 
@@ -243,12 +279,12 @@ def login(userid, password, sess=None):
     url = "http://m.dcinside.com/login.php?r_url=m.dcinside.com%2Findex.php"
     headers = GET_HEADERS.copy()
     headers["Referer"] = "http://m.dcinside.com/index.php"
-    res = sess.get(url, headers=headers, timeout=10)
+    res = _get(sess, url, headers=headers, timeout=3)
     data = extractKeys(res.text, '"login_process')
     headers = POST_HEADERS.copy()
     headers["Referer"] = url
     url = "http://m.dcinside.com/_access_token.php"
-    res = sess.post(url, headers=headers, data={"token_verify": "login", "con_key": data["con_key"]}, timeout=10)
+    res = _post(sess, url, headers=headers, data={"token_verify": "login", "con_key": data["con_key"]}, timeout=3)
     data["con_key"] = res.json()["data"]
     url = "https://dcid.dcinside.com/join/mobile_login_ok.php"
     headers["Host"] = "dcid.dcinside.com"
@@ -262,21 +298,21 @@ def login(userid, password, sess=None):
     data["id_chk"] = ""
     #data["mode"] = ""
     if "form_ipin" in data: del(data["form_ipin"])
-    res = sess.post(url, headers=headers, data=data, timeout=10)
+    res = _post(sess, url, headers=headers, data=data, timeout=3)
     print(data)
     while 0 <= res.text.find("rucode"):
         print("login fail!")
         print(res.text)
         print(res.headers)
         time.sleep(5)
-        res = sess.post(url, headers=headers, data=data, timeout=10)
+        res = _post(sess, url, headers=headers, data=data, timeout=3)
     return sess
     
 def logout(sess):
     url = "http://m.dcinside.com/logout.php?r_url=m.dcinside.com%2Findex.php"
     headers = GET_HEADERS.copy()
     headers["Referer"] = "http://m.dcinside.com/index.php"
-    res = sess.get(url, headers=headers, timeout=10)
+    res = _get(sess, url, headers=headers, timeout=3)
     return sess
     
 def extractKeys(html, start_form_keyword):
@@ -349,6 +385,7 @@ def raw_parse(text, start, end, offset=0):
     if e == -1: return None, 0
     return text[s:e], e
 
+
 if __name__ == '__main__':
     print("login and get session..")
     #sess = login("sech9446", "song4627")
@@ -357,7 +394,19 @@ if __name__ == '__main__':
     #removeDoc("alphago", True, "276", None, sess)
     #logout(sess=sess)
     #removeDoc("alphago", True, "279", "1234")
-    print(upvote("alphago", True, "186"))
+    board= "programming"
+    is_miner = False
+    print("writing doc..")
+    doc_no = writeDoc(board, is_miner, "주작기", "qwer1234!", "주작기 테스트%d" % random.randint(1, 100000) , "test")
+    for i in range(4):
+        print("writing comments..")
+        try:
+            writeComment(board, is_miner, doc_no, "주작기", "1234", "주작기 테스트|%d" % random.randint(1, 100000))
+        except Exception as e:
+            print(e)
+        time.sleep(1)
+    print("upvoting..")
+    print(upvote(board, is_miner, doc_no, 1000))
     exit(1)
     #res = writeDoc("얄파고", "1234", "alphago", "알파고님 동물원 언제만드시냐", "거기 들어가면 알파고님이 교배시켜주시겠지? ㅎㅎㅎㅎ")
     #[print(i) for i in iterableBoard(board="programming", num=100)]
