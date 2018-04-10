@@ -27,7 +27,7 @@ def start(config_data):
     _, temp_path = tempfile.mkstemp()
     with open(temp_path, 'w') as f:
         f.write(base64.b64decode(config_data).decode("utf-8"))
-        f.write('\nscript-security 2\nup /etc/openvpn/update-resolv-conf\ndown /etc/openvpn/update-resolv-conf')
+        f.write('\nscript-security 2\nup /etc/openvpn/update-resolv-conf\ndown /etc/openvpn/update-resolv-conf\ndown-pre')
     p = subprocess.Popen(['openvpn', '--config', temp_path], stdout=subprocess.PIPE, universal_newlines=True)
     for stdout_line in iter(p.stdout.readline, ""):
         if "Initialization Sequence Completed" in stdout_line:
@@ -35,7 +35,6 @@ def start(config_data):
         elif "will try again" in stdout_line or "process restarting" in stdout_line:
             stop(p)
             return None
-            break
         else:
             print(stdout_line)
     return p
@@ -59,9 +58,7 @@ def do(func, n=1):
 
 if __name__ == '__main__':
     vpn_list = getVpngateServerList()
-    print(len(vpn_list))
-    for i in range(len(vpn_list)):
-        print(len(vpn_list[i][-1]))
+    print('pull-filter ignore "dhcp-option DNS"\n' + base64.b64decode(vpn_list[0][-1]).decode("utf-8"))
     exit(1)
     l = getVpngateServerList()
     p = start(l[0][-1])
