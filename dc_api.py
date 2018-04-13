@@ -49,7 +49,8 @@ def _post(sess, url, data=None, json=None, **kwargs):
         except requests.exceptions.TooManyRedirects:
             pass
         except Exception as e:
-            raise(e)
+            print(e)
+            pass
     return res
 
 def _get(sess, url, **kwargs):
@@ -62,7 +63,8 @@ def _get(sess, url, **kwargs):
         except requests.exceptions.TooManyRedirects:
             pass
         except Exception as e:
-            raise(e)
+            print(e)
+            pass
     return res
 
 def upvote(board, is_miner, doc_no, num=1, sess=None):
@@ -214,6 +216,7 @@ def writeDoc(board, is_miner, name, password, title, contents, sess=None):
         print(result)
         raise Exception(repr(new_block_key))
     data["Block_key"] = new_block_key["data"]
+    print(data)
     url = "http://upload.dcinside.com/g_write.php"
     result = _post(sess, url, data=urllib.parse.urlencode(data, True), headers=headers).text
     doc_no, i = raw_parse(result, "no=", '"')
@@ -239,12 +242,20 @@ def modifyDoc(board, is_miner, doc_no, name, password, title, contents, sess=Non
         headers["Connection"] = "keep-alive"
         res = _post(sess, url, data=data, headers=headers)
     else:
-        params = {"id": board, "no": doc_no, "mode": "modify"}
+        params = {"id": board, "no": doc_no, "mode": "modify", "page": ""}
         headers = GET_HEADERS.copy()
-        headers["Referer"] = "http://m.dcinside.com/view.php?id=%s&no=%s" % (board, doc_no)
+        headers["Referer"] = "http://m.dcinside.com/view.php?id=%s&no=%s&page=" % (board, doc_no)
+        headers["Host"] = "m.dcinside.com"
+        headers["Origin"] = "http://m.dcinside.com"
+        headers["Accept-Language"] = "en-US,en;q=0.9"
+        headers["Cache-Control"] = "max-age=0"
+        headers["Connection"] = "keep-alive"
         res = _get(sess, url, params=params, headers=headers)
     data = extractKeys(res.text, 'g_write.php"')
     # get secret input
+    if "id" not in data:
+        print("Error while modify doc(Maybe there's no article with that id)")
+        raise Exception(repr(res.text))
     if name: data['name'] = name
     if password: data['password'] = password
     data['subject'] = title
@@ -389,13 +400,13 @@ def login(userid, password, sess=None):
     #data["mode"] = ""
     if "form_ipin" in data: del(data["form_ipin"])
     res = _post(sess, url, headers=headers, data=data, timeout=3)
-    print(data)
-    print(res.headers)
+    #print(data)
+    #print(res.headers)
     while 0 <= res.text.find("rucode"):
-        print("login fail!")
-        time.sleep(3)
+        #print("login fail!")
+        #time.sleep(3)
         return login(userid, password)
-    time.sleep(1)
+    #time.sleep(1)
     return sess
     
 def logout(sess):
@@ -478,14 +489,15 @@ def raw_parse(text, start, end, offset=0):
 
 if __name__ == '__main__':
     print("login and get session..")
-    board= "alphago"
+    board= "game_dev"
     is_miner = True
     sess = login("sech9446", "song4627")
     '''
     for i in iterableComments(board, is_miner, "304", sess=sess):
         if i["comment_no"]: removeComment(board, is_miner, "304", i["comment_no"], None, sess)
     '''
-    modifyDoc(board, is_miner, "305", name=None, password=None, title="1234", contents="456", sess=sess)
+    #modifyDoc(board, is_miner, "310", name=None, password=None, title="1234", contents="456", sess=sess)
+    doc_no = writeDoc(board, is_miner, name=None, password=None, title="test", contents="test", sess=sess)
     logout(sess)
     
 '''
