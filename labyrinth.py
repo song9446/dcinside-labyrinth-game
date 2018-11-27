@@ -73,13 +73,9 @@ def createScene(floor):
         hint=components["hint"])
     return scene, components["answer"].upper().replace(' ', '').split("\n")
 
-def run(board, userid=None, secret=None):
-    if userid: 
-        sess = dc_api.login(userid, secret)
-    else:
-        sess = dc_api.gen_session()
+def run(board):
     max_floor = sum(1 for i in os.listdir(SCENES_PATH) if os.path.isdir(os.path.join(SCENES_PATH, i)) and i.isdigit() and int(i)>0)
-    print(max_floor)
+    print("total floor num", max_floor)
     commenters = []
     answerers = []
     last_answerer = ""
@@ -87,10 +83,11 @@ def run(board, userid=None, secret=None):
     start_time = time.time()
     for floor in range(1, max_floor+1):
         try:
+            print("generating scene..")
             scene, answers = createScene(floor)
             title_format = TITLE_FORMAT_GENERAL
             if floor==1:
-                recent_fun_article = max(dc_api.board(board_id=board, num=50, sess=sess), key=lambda doc: doc["view_num"] + doc["voteup_num"]*10)
+                recent_fun_article = max(dc_api.board(board_id=board, num=50), key=lambda doc: doc["view_num"] + doc["voteup_num"]*10)
                 scene = scene.format_map(SafeDict(recent_fun_article=("%s [%d]" % (recent_fun_article["title"], recent_fun_article["comment_num"])), name=last_answerer))
                 title_format = TITLE_FORMAT_ATTRACT
             elif floor<0:
@@ -102,33 +99,37 @@ def run(board, userid=None, secret=None):
             else:
                 scene = scene.format_map(SafeDict(name=last_answerer))
             scene = korean.l10n.proofread(scene)
+            print("upload scene..")
             if floor==1:
-                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene, sess=sess)
+                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene)
+                print("doc no: " , doc_id)
                 time.sleep(2)
-                dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 1층 --", sess=sess)
+                dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 1층 --")
             elif floor<0:
-                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene, sess=sess)
+                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene)
                 time.sleep(BREAK_TIME)
                 return
             else:
-                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene, sess=sess)
+                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene)
                 #time.sleep(2)
-                #dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents=korean.l10n.proofread(ANSWER_COMMENT.format(name=last_answerer)), sess=sess)
+                #dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents=korean.l10n.proofread(ANSWER_COMMENT.format(name=last_answerer)))
                 time.sleep(2)
-                dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 %d층 -- / 문을 연사람: %s / 갇힌 사람: %s" % (floor, ", ".join(answerers), ", ".join(commenters)), sess=sess)
+                dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 %d층 -- / 문을 연사람: %s / 갇힌 사람: %s" % (floor, ", ".join(answerers), ", ".join(commenters)))
             solved = False
             last_answerer = ""
             while not solved:
+                print("wait comment..")
                 if time.time() - start_time > COLLAPSED_THRESHOLD:
+                    print("collapsed")
                     dc_api.remove_document(board_id=board, doc_id=doc_id, pw=PASSWORD)
                     floor = -1
                     break
-                for comment in dc_api.comments(board_id=board, doc_id=doc_id, num=20, sess=sess):
+                for comment in dc_api.comments(board_id=board, doc_id=doc_id, num=20):
                     if comment["author"] not in commenters: commenters.append(comment["author"])
                     if compareAnswer(answers, comment["contents"]):
                         dc_api.remove_document(board_id=board, doc_id=doc_id, pw=PASSWORD)
                         last_answerer = comment["author"]
-                        print(last_answerer)
+                        print("answer found:", last_answerer)
                         if last_answerer not in answerers: answerers.append(last_answerer)
                         solved = True
                         floor += 1
@@ -136,7 +137,7 @@ def run(board, userid=None, secret=None):
                         break
                 time.sleep(5)
         except KeyboardInterrupt:
-            try: dc_api.remove_document(board_id=board, doc_id=doc_id, pw=PASSWORD, sess=sess)
+            try: dc_api.remove_document(board_id=board, doc_id=doc_id, pw=PASSWORD)
             except: pass
             exit(1)
         except Exception as e:
@@ -149,8 +150,10 @@ def run(board, userid=None, secret=None):
             continue
             '''
             exit(1)
-        
+
 
 if __name__ == '__main__':
+    print("login")
+    dc_api.login(ID, SECRET)
     while True:
-        run(BOARD, ID, SECRET)
+        run(BOARD)
