@@ -47,6 +47,7 @@ def hex2rgba(color):
     b = (color-r*0x01000000-g*0x00010000) // 0x00000100
     a = color-r*0x01000000-g*0x00010000-b*0x00000100
     return "rgba(%d, %d, %d, %f)" % (r, g ,b, a/256.)
+
 def compareAnswer(answers, candidate):
     for answer in answers:
         if answer in candidate.upper().replace(' ', ''):
@@ -92,7 +93,7 @@ def run(board, userid=None, secret=None):
                 recent_fun_article = max(dc_api.board(board_id=board, num=50, sess=sess), key=lambda doc: doc["view_num"] + doc["voteup_num"]*10)
                 scene = scene.format_map(SafeDict(recent_fun_article=("%s [%d]" % (recent_fun_article["title"], recent_fun_article["comment_num"])), name=last_answerer))
                 title_format = TITLE_FORMAT_ATTRACT
-            elif floor==-1:
+            elif floor<0:
                 for i in range(10):
                     commenter.append("누군가")
                 answerers += ["베리나", "국주", "김제동", "박근혜"]
@@ -105,7 +106,7 @@ def run(board, userid=None, secret=None):
                 doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene, sess=sess)
                 time.sleep(2)
                 dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 1층 --", sess=sess)
-            elif floor==-1:
+            elif floor<0:
                 doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene, sess=sess)
                 time.sleep(BREAK_TIME)
                 return
