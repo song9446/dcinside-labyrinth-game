@@ -9,6 +9,7 @@ import datetime
 import korean
 import atexit
 import traceback
+import random
 
 
 class SafeDict(dict):
@@ -16,7 +17,6 @@ class SafeDict(dict):
         return '{' + str(key) + '}'
 
 COLLAPSED_THRESHOLD = 2*60*60
-COLLAPSED_THRESHOLD = 30
 BREAK_TIME = 5*60
 
 SCENE_TEMPLATE_PATH = "scenes/template_bgcolor_fontcolor_floor_description_problem_hint.html"
@@ -26,13 +26,21 @@ COMPONENTS = ["description", "problem", "hint", "answer"]
 BOARD="alphago"
 ID="bot123"
 SECRET="1q2w3e4r!"
-NAME=None
-PASSWORD=None
+NAME=""
+PASSWORD=""
 TITLE_FORMAT_ATTRACT="[미궁] 지하{floor}층에 갇혔다.."
-TITLE_FORMAT_GENERAL = "[미궁] 지하{floor}층에 갇혔다..({name}이(가) 문을 열었음)"
+TITLE_FORMAT_GENERAL = "[미궁] 지하{floor}층에 갇혔다..({last_answerer}이(가) 문을 열었음)"
 TITLE_FORMAT_COLLAPSED = "[미궁] 시간이 지나 모두들 죽고 말았습니다.."
 FLOOR_ALIVE_TIME = datetime.timedelta(hours=1)
-ANSWER_COMMENT="{name}이(가) 암호를 입력하자 문이 열렸다. 방에 갇혀있던 사람들은 일말의 불안감을 느끼며 천천히 계단을 내려가기 시작했다..."
+ANSWER_COMMENT="{last_answerer}이(가) 암호를 입력하자 문이 열렸다. 방에 갇혀있던 사람들은 일말의 불안감을 느끼며 천천히 계단을 내려가기 시작했다..."
+
+def retry(func, *args, **kargs):
+    try:
+        return func(*args, **kargs)
+    except Exception as e:
+        print(e)
+        time.sleep(3)
+        return retry(func, *args, **kargs)
 
 def contrastFontColor(bgcolor):
     r = bgcolor // 0x010000
@@ -47,6 +55,7 @@ def hex2rgba(color):
     b = (color-r*0x01000000-g*0x00010000) // 0x00000100
     a = color-r*0x01000000-g*0x00010000-b*0x00000100
     return "rgba(%d, %d, %d, %f)" % (r, g ,b, a/256.)
+
 def compareAnswer(answers, candidate):
     for answer in answers:
         if answer in candidate.upper().replace(' ', ''):
@@ -74,64 +83,74 @@ def createScene(floor):
 
 def run(board):
     max_floor = sum(1 for i in os.listdir(SCENES_PATH) if os.path.isdir(os.path.join(SCENES_PATH, i)) and i.isdigit() and int(i)>0)
-    print("total floor num", max_floor)
-    commenters = []
-    answerers = []
-    last_answerer = ""
+    state = SafeDict({
+        "recent_fun_article": "",
+        "max_floor": max_floor,
+        "floor": 1,
+        "commenters": [],
+        "answerers": [],
+        "last_answerer": "",
+        })
     doc_id = ""
     start_time = time.time()
     for floor in range(1, max_floor+1):
         try:
-            print("generating scene..")
+            state["floor"] = floor
+            if time.time() - start_time > COLLAPSED_THRESHOLD:
+                retry(dc_api.remove_document, board_id=board, doc_id=doc_id, pw=PASSWORD)
+                floor = random.randint(-2, -1)
+            print("generating scene..", floor)
             scene, answers = createScene(floor)
             title_format = TITLE_FORMAT_GENERAL
             if floor==1:
                 recent_fun_article = max(dc_api.board(board_id=board, num=50), key=lambda doc: doc["view_num"] + doc["voteup_num"]*10)
-                scene = scene.format_map(SafeDict(recent_fun_article=("%s [%d]" % (recent_fun_article["title"], recent_fun_article["comment_num"])), name=last_answerer))
+                state["recent_fun_article"] = ("%s [%d]" % (recent_fun_article["title"], recent_fun_article["comment_num"]))
+                scene = scene.format_map(state)
                 title_format = TITLE_FORMAT_ATTRACT
-            elif floor==-1:
+            elif floor<0:
                 for i in range(10):
-                    commenter.append("누군가")
-                answerers += ["베리나", "국주", "김제동", "박근혜"]
-                scene = scene.format_map(SafeDict([("commenter%d"%i, com) for i, com in enumerate(commenters)] + [("answerer%d"%i, ans) for i, ans in enumerate(answerer)]))
+                    state["commenters"].append("누군가")
+                state["answerers"] += ["베리나", "국주", "김제동", "박근혜"]
+                scene = scene.format_map(state)
                 title_format = TITLE_FORMAT_COLLAPSED
             else:
-                scene = scene.format_map(SafeDict(name=last_answerer))
+                scene = scene.format_map(state)
             scene = korean.l10n.proofread(scene)
             print("upload scene..")
             if floor==1:
-                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene)
+                doc_id = retry(dc_api.write_document, board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(state)), contents=scene)
                 print("doc no: " , doc_id)
                 time.sleep(2)
-                dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 1층 --")
-            elif floor==-1:
-                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene)
+                retry(dc_api.write_comment, board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 1층 --")
+            elif floor<0:
+                doc_id = retry(dc_api.write_document, board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(state)), contents=scene)
+                print("doc no: " , doc_id)
                 time.sleep(BREAK_TIME)
                 return
             else:
-                doc_id = dc_api.write_document(board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(SafeDict(floor=floor, name=last_answerer))), contents=scene)
-                #time.sleep(2)
-                #dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents=korean.l10n.proofread(ANSWER_COMMENT.format(name=last_answerer)))
+                doc_id = retry(dc_api.write_document, board_id=board, name=NAME, pw=PASSWORD, title=korean.l10n.proofread(title_format.format_map(state)), contents=scene)
+                print("doc no: " , doc_id)
                 time.sleep(2)
-                dc_api.write_comment(board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 %d층 -- / 문을 연사람: %s / 갇힌 사람: %s" % (floor, ", ".join(answerers), ", ".join(commenters)))
+                retry(dc_api.write_comment, board_id=board, doc_id=doc_id, name=NAME, pw=PASSWORD, contents="-- 현제 층: 지하 %d층 -- / 문을 연사람: %s / 갇힌 사람: %s" % (floor, ", ".join(state["answerers"]), ", ".join(state["commenters"])))
             solved = False
-            last_answerer = ""
+            state["last_answerer"] = ""
             while not solved:
                 print("wait comment..")
                 if time.time() - start_time > COLLAPSED_THRESHOLD:
                     print("collapsed")
-                    dc_api.remove_document(board_id=board, doc_id=doc_id, pw=PASSWORD)
-                    floor = -1
                     break
                 for comment in dc_api.comments(board_id=board, doc_id=doc_id, num=20):
-                    if comment["author"] not in commenters: commenters.append(comment["author"])
+                    if comment["author"] not in state["commenters"]:
+                        if comment["author"] != "점진적미궁":
+                            state["commenters"].append(comment["author"])
                     if compareAnswer(answers, comment["contents"]):
-                        dc_api.remove_document(board_id=board, doc_id=doc_id, pw=PASSWORD)
-                        last_answerer = comment["author"]
-                        print("answer found:", last_answerer)
-                        if last_answerer not in answerers: answerers.append(last_answerer)
+                        retry(dc_api.remove_document, board_id=board, doc_id=doc_id, pw=PASSWORD)
+                        state["last_answerer"] = comment["author"]
+                        print("answer found:", state["last_answerer"])
+                        if state["last_answerer"] not in state["answerers"]: state["answerers"].append(state["last_answerer"])
                         solved = True
                         floor += 1
+                        start_time = time.time()
                         print("floor: %d" % floor)
                         break
                 time.sleep(5)
@@ -142,17 +161,10 @@ def run(board):
         except Exception as e:
             print(e)
             traceback.print_exc()
-            '''
-            print("repeat until success")
-            time.sleep(5)
-            floor -= 1
-            continue
-            '''
             exit(1)
-
 
 if __name__ == '__main__':
     print("login")
-    dc_api.login(ID, SECRET)
+    retry(dc_api.login, ID, SECRET)
     while True:
         run(BOARD)
